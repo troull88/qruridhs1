@@ -1,1 +1,13 @@
-/yfproxy/* https://query1.finance.yahoo.com/:splat 200
+# NOTE: This file is a Netlify-specific feature and has NO effect on GitHub Pages.
+# The Yahoo Finance CORS proxy that was defined here:
+#
+#   /yfproxy/* https://query1.finance.yahoo.com/:splat 200
+#
+# has been replaced by a client-side fallback chain inside index.html itself,
+# using the following public CORS proxies (tried in order):
+#
+#   1. https://corsproxy.io/
+#   2. https://api.allorigins.win/raw
+#   3. https://proxy.cors.sh/
+#
+# You can safely delete this file from your GitHub repository.

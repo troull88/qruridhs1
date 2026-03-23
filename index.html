@@ -981,8 +981,14 @@ async function fetchPrices(name) {
 
   const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yfSymbol)}?interval=1d&range=10y`;
 
-  // Use Netlify's server-side proxy (defined in _redirects) — no CORS issues
-  const proxyUrl = `/yfproxy/v8/finance/chart/${encodeURIComponent(yfSymbol)}?interval=1d&range=10y`;
+  // Public CORS proxies — tried in order until one succeeds.
+  // (Netlify _redirects proxy no longer used: GitHub Pages is a static host
+  //  and cannot process server-side redirect/proxy rules.)
+  const CORS_PROXIES = [
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    url => `https://proxy.cors.sh/${url}`,
+  ];
 
   function tryProxy(url) {
     return new Promise((resolve, reject) => {
@@ -1002,8 +1008,20 @@ async function fetchPrices(name) {
     });
   }
 
+  // Try each proxy in sequence; move to the next on failure
+  async function tryAllProxies(targetUrl) {
+    for (const makeProxy of CORS_PROXIES) {
+      try {
+        return await tryProxy(makeProxy(targetUrl));
+      } catch (e) {
+        console.warn("Proxy failed, trying next:", e.message);
+      }
+    }
+    throw new Error("All CORS proxies exhausted");
+  }
+
   try {
-    const { result } = await tryProxy(proxyUrl);
+    const { result } = await tryAllProxies(yfUrl);
 
     const timestamps = result.timestamp;
     const rawCloses  = result.indicators.quote[0].close;
