@@ -1105,14 +1105,18 @@ async function fetchPrices(name) {
 
     const timestamps = result.timestamp;
     const rawCloses  = result.indicators.quote[0].close;
+    const rawHighs   = result.indicators.quote[0].high;
+    const rawLows    = result.indicators.quote[0].low;
     const cutoff = new Date(2019, 0, 1).getTime();
-    const dates = [], closes = [];
+    const dates = [], closes = [], highs = [], lows = [];
     for (let i = 0; i < timestamps.length; i++) {
       if (rawCloses[i] == null) continue;
       const d = new Date(timestamps[i] * 1000);
       if (d.getTime() < cutoff) continue;
       dates.push(d);
       closes.push(rawCloses[i]);
+      highs.push(rawHighs[i] ?? rawCloses[i]);
+      lows.push(rawLows[i]  ?? rawCloses[i]);
     }
     if (!dates.length) throw new Error("Empty after filter");
 
@@ -1121,8 +1125,10 @@ async function fetchPrices(name) {
     const isGBp = rawCurrency === "GBp";
     const yfCurrency = isGBp ? "GBP" : (rawCurrency.toUpperCase() || null);
     const finalCloses = isGBp ? closes.map(c => c / 100) : closes;
+    const finalHighs  = isGBp ? highs.map(h => h / 100)  : highs;
+    const finalLows   = isGBp ? lows.map(l => l / 100)   : lows;
 
-    priceCache[name] = { dates, closes: finalCloses, source: "live", yfCurrency };
+    priceCache[name] = { dates, closes: finalCloses, highs: finalHighs, lows: finalLows, source: "live", yfCurrency };
     return priceCache[name];
 
   } catch(err) {
@@ -1302,7 +1308,7 @@ async function selectStock(name) {
   const ticker = TICKER_MAP[name] || name.split(" ")[0];
   const av = avatar(name);
 
-  const {dates, closes, source, yfCurrency} = await fetchPrices(name);
+  const {dates, closes, highs = [], lows = [], source, yfCurrency} = await fetchPrices(name);
   const lastClose = closes.length ? closes[closes.length-1] : 0;
   const firstClose = closes.length ? closes[0] : 1;
   const changePct = firstClose ? (lastClose - firstClose)/firstClose*100 : 0;
@@ -1379,7 +1385,7 @@ async function selectStock(name) {
   rpnlEl.textContent = fmtMoney(pnl.realized, stockCurrency);
   rpnlEl.className = pnl.realized >= 0 ? "pos" : "neg";
 
-  if (currentTab === "chart") renderChart(name, dates, closes, yfCurrency);
+  if (currentTab === "chart") renderChart(name, dates, closes, yfCurrency, highs, lows);
   else renderTxTable(name);
 }
 
@@ -1393,8 +1399,8 @@ async function setTimeframe(tf, el) {
   document.querySelectorAll(".tf-btn").forEach(b => b.classList.remove("active"));
   el.classList.add("active");
   if (selectedStock) {
-    const {dates, closes, yfCurrency} = await fetchPrices(selectedStock);
-    renderChart(selectedStock, dates, closes, yfCurrency);
+    const {dates, closes, highs = [], lows = [], yfCurrency} = await fetchPrices(selectedStock);
+    renderChart(selectedStock, dates, closes, yfCurrency, highs, lows);
   }
 }
 
@@ -1407,8 +1413,8 @@ async function applyCustomDateRange() {
   // Deactivate preset buttons when custom range is set
   document.querySelectorAll(".tf-btn").forEach(b => b.classList.remove("active"));
   if (selectedStock) {
-    const {dates, closes, yfCurrency} = await fetchPrices(selectedStock);
-    renderChart(selectedStock, dates, closes, yfCurrency);
+    const {dates, closes, highs = [], lows = [], yfCurrency} = await fetchPrices(selectedStock);
+    renderChart(selectedStock, dates, closes, yfCurrency, highs, lows);
   }
 }
 
@@ -1421,13 +1427,13 @@ async function clearCustomDateRange() {
   const ytdBtn = Array.from(document.querySelectorAll(".tf-btn")).find(b => b.textContent === "YTD");
   if (ytdBtn) { currentTimeframe = "YTD"; ytdBtn.classList.add("active"); }
   if (selectedStock) {
-    const {dates, closes, yfCurrency} = await fetchPrices(selectedStock);
-    renderChart(selectedStock, dates, closes, yfCurrency);
+    const {dates, closes, highs = [], lows = [], yfCurrency} = await fetchPrices(selectedStock);
+    renderChart(selectedStock, dates, closes, yfCurrency, highs, lows);
   }
 }
 
-function renderChart(name, datesIn, closesIn, yfCurrency) {
-  let dates = datesIn, closes = closesIn;
+function renderChart(name, datesIn, closesIn, yfCurrency, highsIn = [], lowsIn = []) {
+  let dates = datesIn, closes = closesIn, highs = highsIn, lows = lowsIn;
   const canvas = document.getElementById("priceChart");
   const ctx = canvas.getContext("2d");
   // Use YF native currency if available, otherwise fall back to account currency
@@ -1456,13 +1462,19 @@ function renderChart(name, datesIn, closesIn, yfCurrency) {
   const sliceEnd   = cutoffEnd ? dates.findIndex(d => d > cutoffEnd) : -1;
   let slicedDates  = sliceStart >= 0 ? dates.slice(sliceStart)  : dates;
   let slicedCloses = sliceStart >= 0 ? closes.slice(sliceStart) : closes;
+  let slicedHighs  = sliceStart >= 0 ? highs.slice(sliceStart)  : highs;
+  let slicedLows   = sliceStart >= 0 ? lows.slice(sliceStart)   : lows;
   if (cutoffEnd && sliceEnd > 0) {
     const relEnd = sliceEnd - sliceStart;
     slicedDates  = slicedDates.slice(0, relEnd);
     slicedCloses = slicedCloses.slice(0, relEnd);
+    slicedHighs  = slicedHighs.slice(0, relEnd);
+    slicedLows   = slicedLows.slice(0, relEnd);
   }
   dates  = slicedDates;
   closes = slicedCloses;
+  highs  = slicedHighs;
+  lows   = slicedLows;
 
   const firstClose = closes[0];
   const lastClose2 = closes[closes.length - 1];
@@ -1646,6 +1658,32 @@ function renderChart(name, datesIn, closesIn, yfCurrency) {
           pointHoverRadius: 0,
           yAxisID: "yPrice",
           order: 4
+        },
+        {
+          type: "line",
+          label: "Day High",
+          data: highs.length ? highs : [],
+          borderColor: "rgba(34,197,94,0.18)",
+          borderWidth: 1,
+          borderDash: [3, 4],
+          fill: false,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          yAxisID: "yPrice",
+          order: 5
+        },
+        {
+          type: "line",
+          label: "Day Low",
+          data: lows.length ? lows : [],
+          borderColor: "rgba(239,68,68,0.18)",
+          borderWidth: 1,
+          borderDash: [3, 4],
+          fill: false,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          yAxisID: "yPrice",
+          order: 6
         }
       ]
     },
@@ -1671,7 +1709,11 @@ function renderChart(name, datesIn, closesIn, yfCurrency) {
               if (item.dataset.label !== "% Change") return null;
               const price = closes[item.dataIndex];
               const pct   = item.raw;
+              const high  = highs[item.dataIndex];
+              const low   = lows[item.dataIndex];
               const lines = [` ${chartSym}${price.toFixed(2)}  (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)`];
+              if (high != null) lines.push(` ↑ High  ${chartSym}${high.toFixed(2)}`);
+              if (low  != null) lines.push(` ↓ Low   ${chartSym}${low.toFixed(2)}`);
               const ds = labelToDateStr[labels[item.dataIndex]];
               const group = ds ? tradesByDate[ds] : null;
               if (group) {
@@ -1764,8 +1806,8 @@ async function switchTab(tab) {
   document.getElementById("chart-panel").style.display = tab==="chart" ? "flex" : "none";
   document.getElementById("tx-panel").style.display    = tab==="tx"    ? "flex" : "none";
   if (tab==="chart" && selectedStock) {
-    const {dates, closes, yfCurrency} = await fetchPrices(selectedStock);
-    renderChart(selectedStock, dates, closes, yfCurrency);
+    const {dates, closes, highs = [], lows = [], yfCurrency} = await fetchPrices(selectedStock);
+    renderChart(selectedStock, dates, closes, yfCurrency, highs, lows);
   }
   if (tab==="tx" && selectedStock) renderTxTable(selectedStock);
 }
