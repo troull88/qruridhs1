@@ -7,7 +7,6 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-
   :root {
     --bg: #070c14;
     --bg2: #0d1420;
@@ -249,6 +248,8 @@
   .legend-dot { width:10px; height:10px; border-radius:50%; }
   .timeframe-btns { display:flex; gap:4px; }
   .tf-btn {
+    display:flex; align-items:center; justify-content:center;
+    min-height:32px;
     padding:4px 12px; border-radius:6px; font-size:12px; font-weight:600;
     cursor:pointer; background:transparent; border:1px solid var(--border2);
     color:var(--text3); transition:all .15s; font-family:"DM Sans",sans-serif;
@@ -257,21 +258,27 @@
   .tf-btn.active { background:var(--bg4); border-color:var(--accent); color:var(--accent); }
   .date-range {
     display:flex; align-items:center; gap:4px;
-    padding:4px 8px; background:var(--bg3); border:1px solid var(--border2);
-    border-radius:8px; font-size:11px;
+    min-height:32px; box-sizing:border-box;
+    padding:4px 10px; background:var(--bg3); border:1px solid var(--border2);
+    border-radius:8px; font-size:12px;
   }
-  .date-range label { color:var(--text3); white-space:nowrap; font-size:10px; }
+  .date-range label { color:var(--text3); white-space:nowrap; font-size:11px; }
   .date-range input[type="date"] {
+    height:22px;
     background:transparent; border:none; outline:none;
-    color:var(--text); font-family:"DM Sans",sans-serif; font-size:11px;
+    color:var(--text); font-family:"DM Sans",sans-serif; font-size:12px;
     width:110px; color-scheme:dark;
   }
   @media (max-width: 768px) {
-    .date-range input[type="date"] { width:90px; font-size:10px; }
-    .tf-btn { padding:4px 8px; font-size:11px; }
+    .date-range input[type="date"] { width:90px; font-size:10px; height:20px; }
+    .tf-btn { min-height:30px; padding:4px 8px; font-size:11px; }
+    .date-range { min-height:30px; font-size:11px; }
+    .date-range label { font-size:10px; }
   }
   .date-range-sep { color:var(--text3); }
   .date-range-clear {
+    display:flex; align-items:center; justify-content:center;
+    min-height:22px;
     background:transparent; border:none; color:var(--text3); cursor:pointer;
     font-size:12px; padding:0 2px; line-height:1;
   }
@@ -867,17 +874,29 @@ function calcPnL(trades) {
   let lots = [];
   let realized = 0;
   let totalBought = 0, totalSold = 0, totalBoughtEur = 0, totalSoldEur = 0;
+  let totalBoughtLocal = 0, totalSoldLocal = 0;
+  let avgBuyCurrency = null, avgSellCurrency = null;
+  let totalBoughtLocalCurrency = null, totalSoldLocalCurrency = null;
 
   for (const t of sorted) {
     const value = Math.abs(t.totalEur); // actual account value incl. fees & FX
+    const localPrice = Math.abs(t.localPrice || t.price || 0);
+    const localCurrency = t.localCurrency || t.currency || null;
+
     if (t.isBuy) {
-      totalBought    += t.shares;
+      totalBought += t.shares;
       totalBoughtEur += value;
+      totalBoughtLocal += localPrice * Math.abs(t.shares);
+      if (!avgBuyCurrency && localCurrency) avgBuyCurrency = localCurrency;
+      if (!totalBoughtLocalCurrency && localCurrency) totalBoughtLocalCurrency = localCurrency;
       lots.push({ shares: t.shares, value }); // store total value of lot, not price per share
     } else {
       const sharesSold = Math.abs(t.shares);
-      totalSold    += sharesSold;
+      totalSold += sharesSold;
       totalSoldEur += value;
+      totalSoldLocal += localPrice * sharesSold;
+      if (!avgSellCurrency && localCurrency) avgSellCurrency = localCurrency;
+      if (!totalSoldLocalCurrency && localCurrency) totalSoldLocalCurrency = localCurrency;
 
       // FIFO: match against oldest lots by proportion of shares
       let remaining = sharesSold;
@@ -888,9 +907,9 @@ function calcPnL(trades) {
         // Cost basis is proportional to how many shares of the lot we're using
         const lotCost = (used / lot.shares) * lot.value;
         costBasis += lotCost;
-        lot.value  -= lotCost;
+        lot.value -= lotCost;
         lot.shares -= used;
-        remaining  -= used;
+        remaining -= used;
         if (lot.shares <= 0) lots.shift();
       }
       realized += value - costBasis; // proceeds minus cost basis
@@ -898,9 +917,29 @@ function calcPnL(trades) {
   }
 
   const holding = Math.round(totalBought - totalSold);
-  const avgBuy  = totalBought ? totalBoughtEur / totalBought : 0;
-  const avgSell = totalSold   ? totalSoldEur   / totalSold   : 0;
-  return { realized, totalBought, totalSold, totalBoughtEur, holding, avgBuy, avgSell };
+  const avgBuy = totalBought ? totalBoughtEur / totalBought : 0;
+  const avgSell = totalSold ? totalSoldEur / totalSold : 0;
+  const avgBuyLocal = totalBought ? totalBoughtLocal / totalBought : 0;
+  const avgSellLocal = totalSold ? totalSoldLocal / totalSold : 0;
+
+  return {
+    realized,
+    totalBought,
+    totalSold,
+    totalBoughtEur,
+    totalSoldEur,
+    totalBoughtLocal,
+    totalSoldLocal,
+    totalBoughtLocalCurrency,
+    totalSoldLocalCurrency,
+    holding,
+    avgBuy,
+    avgSell,
+    avgBuyLocal,
+    avgSellLocal,
+    avgBuyCurrency,
+    avgSellCurrency
+  };
 }
 
 // ── Synthetic fallback (used if Yahoo Finance fetch fails) ────────────────
@@ -1306,11 +1345,31 @@ async function selectStock(name) {
   badge.textContent = (changePct >= 0 ? "↑ +" : "↓ ") + changePct.toFixed(2) + "%";
   badge.className = "pct-badge " + (changePct >= 0 ? "pos" : "neg");
 
-  document.getElementById("d-avg-buy").textContent  = pnl.avgBuy  ? sym+pnl.avgBuy.toFixed(2)  : "—";
-  document.getElementById("d-avg-sell").textContent = pnl.avgSell ? sym+pnl.avgSell.toFixed(2) : "—";
+  const avgBuyCurrency = pnl.avgBuyCurrency || trades.find(t => t.isBuy)?.localCurrency || stockCurrency;
+  const avgSellCurrency = pnl.avgSellCurrency || trades.find(t => !t.isBuy)?.localCurrency || stockCurrency;
+  const avgBuySym = currencySymbol(avgBuyCurrency);
+  const avgSellSym = currencySymbol(avgSellCurrency);
 
-  document.getElementById("d-bought").textContent  = pnl.totalBought + " shares (" + fmtMoneyPlain(pnl.totalBoughtEur, stockCurrency) + ")";
-  document.getElementById("d-sold").textContent    = pnl.totalSold + " shares (" + fmtMoneyPlain(pnl.totalSold * pnl.avgSell, stockCurrency) + ")";
+  document.getElementById("d-avg-buy").textContent  = pnl.avgBuyLocal  ? avgBuySym + pnl.avgBuyLocal.toFixed(2)  : "—";
+  document.getElementById("d-avg-sell").textContent = pnl.avgSellLocal ? avgSellSym + pnl.avgSellLocal.toFixed(2) : "—";
+
+  const boughtLocalCurrency = pnl.totalBoughtLocalCurrency || trades.find(t => t.isBuy)?.localCurrency || stockCurrency;
+  const soldLocalCurrency = pnl.totalSoldLocalCurrency || trades.find(t => !t.isBuy)?.localCurrency || stockCurrency;
+
+  const boughtLocalText = fmtMoneyPlain(pnl.totalBoughtLocal, boughtLocalCurrency);
+  const boughtBaseText = fmtMoneyPlain(pnl.totalBoughtEur, stockCurrency);
+  const soldLocalText = fmtMoneyPlain(pnl.totalSoldLocal, soldLocalCurrency);
+  const soldBaseText = fmtMoneyPlain(pnl.totalSoldEur, stockCurrency);
+
+  const boughtAmounts = boughtLocalCurrency !== stockCurrency
+    ? boughtLocalText + " · " + boughtBaseText
+    : boughtLocalText;
+  const soldAmounts = soldLocalCurrency !== stockCurrency
+    ? soldLocalText + " · " + soldBaseText
+    : soldLocalText;
+
+  document.getElementById("d-bought").textContent  = pnl.totalBought + " shares (" + boughtAmounts + ")";
+  document.getElementById("d-sold").textContent    = pnl.totalSold + " shares (" + soldAmounts + ")";
   const holdStr = pnl.holding === 0 ? "closed" : (pnl.holding > 0 ? "+"+pnl.holding : pnl.holding) + " shares";
   const holdEl = document.getElementById("d-holding");
   holdEl.textContent = holdStr;
